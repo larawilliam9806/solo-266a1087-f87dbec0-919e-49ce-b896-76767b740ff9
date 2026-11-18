@@ -46,10 +46,22 @@
     .scroll { max-height:340px; overflow:auto; }
     .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
     @media (max-width:760px){ .grid2 { grid-template-columns:1fr; } }
+    nav { background:#0b2447; padding:0 28px; display:flex; gap:4px; }
+    nav a { color:#cdd9ec; text-decoration:none; padding:9px 14px; font-size:14px; display:inline-block; }
+    nav a:hover { color:#fff; background:#163c72; }
+    nav a.active { color:#fff; border-bottom:2px solid #7db4ff; }
+    .tag.cur { background:#ecfdf3; color:var(--green); }
+    .tag.old { background:#f2f4f7; color:#475467; }
+    input[type=text].num { width:110px; }
+    td input[type=text] { padding:6px 8px; font-size:13px; }
   </style>
 </head>
 <body>
   <header><h1>水质实验室 · 批次修订发布台</h1></header>
+  <nav>
+    <a href="{{ url_for('index') }}" {% if request.endpoint == 'index' %}class="active"{% endif %}>批次发布</a>
+    <a href="{{ url_for('calibration') }}" {% if request.endpoint in ('calibration', 'calibration_preview') %}class="active"{% endif %}>标样校正</a>
+  </nav>
   <main>
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}

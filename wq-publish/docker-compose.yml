@@ -1,0 +1,13 @@
+services:
+  wq-publish:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - wq-data:/app/data              # SQLite 登记、密钥、隔离区、校正归档
+      - wq-downstream:/app/downstream  # 下游采集程序读取目录（原始 + 校正 CSV）
+    restart: unless-stopped
+
+volumes:
+  wq-data:
+  wq-downstream:

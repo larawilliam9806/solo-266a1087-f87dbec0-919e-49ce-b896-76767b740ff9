@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}标样校正 · 水质批次修订发布{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>校正状态</h2>
+  <div class="meta">
+    <div><b>当前发布版本</b>
+      <span>{% if reg %}v{{ reg.current_version }}{% else %}—{% endif %}</span></div>
+    <div><b>当前批次</b>
+      <span>{% if reg %}{{ reg.batch_no }}{% else %}—{% endif %}</span></div>
+    <div><b>当前标样集</b>
+      <span>{% if standards %}#{{ standards.set.id }}{% else %}未录入{% endif %}</span></div>
+    <div><b>生效校正</b>
+      <span>{% if current_cal %}#{{ current_cal.id }}{% else %}无{% endif %}</span></div>
+  </div>
+  {% if current_cal %}
+  <p class="muted" style="margin-bottom:0">
+    当前校正数据基于 <strong>发布 v{{ current_cal.source_version }}</strong> +
+    <strong>标样集 #{{ current_cal.standards_id }}</strong>（{{ current_cal.row_count }} 行，
+    换算于 {{ current_cal.created_at }} UTC）。
+    供数文件 <code>downstream/{{ calibrated_filename }}</code>：
+    <a href="{{ url_for('calibrated_csv') }}">查看当前校正 CSV</a>。
+  </p>
+  {% else %}
+  <p class="muted" style="margin-bottom:0">
+    当前无生效的校正数据，统计人员暂不可供数。新批次发布或标样修改后，
+    必须重新「换算预览 → 确认」才会生成新的校正 CSV；
+    旧校正文件仅可按原版本追溯（见下方历史），不作为当前数据下载。
+  </p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>标样录入{% if standards %}（当前标样集 #{{ standards.set.id }}，{{ standards.set.created_at }} UTC 保存）{% endif %}</h2>
+  <p class="muted">
+    为每个检测项目录入<strong>两组</strong>仪器读数与对应的真实浓度（标样真值），
+    由两点确定线性校正关系 <code>浓度 = k × 读数 + b</code>。
+    录入要求：两组<strong>读数必须不同</strong>；全部数值<strong>有限且非负</strong>；
+    同一项目只录一行。保存即生成新标样集版本，原校正数据随即失效（需重新换算确认）；
+    内容与当前标样集完全一致时不产生新版本。
+  </p>
+
+  {% if points_view %}
+  <details style="margin-bottom:12px">
+    <summary style="cursor:pointer;font-weight:600">当前标样集明细与校正参数（{{ points_view|length }} 个项目）</summary>
+    <div class="scroll" style="margin-top:8px"><table>
+      <thead><tr><th>检测项目</th><th>读数 x1</th><th>真值 y1</th><th>读数 x2</th><th>真值 y2</th><th>斜率 k</th><th>截距 b</th></tr></thead>
+      <tbody>
+      {% for p in points_view %}
+        <tr>
+          <td>{{ p.analyte }}</td>
+          <td>{{ p.x1|conc }}</td><td>{{ p.y1|conc }}</td>
+          <td>{{ p.x2|conc }}</td><td>{{ p.y2|conc }}</td>
+          {% if p.err %}<td colspan="2" style="color:var(--red)">{{ p.err }}</td>
+          {% else %}<td>{{ p.k|conc }}</td><td>{{ p.b|conc }}</td>{% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </details>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('save_standards') }}">
+    <table id="std-table">
+      <thead>
+        <tr>
+          <th>检测项目</th><th>读数 x1</th><th>真实浓度 y1</th>
+          <th>读数 x2</th><th>真实浓度 y2</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in form_rows %}
+        <tr>
+          <td><input type="text" name="analyte" maxlength="64" value="{{ r.analyte }}" placeholder="如 氨氮"></td>
+          <td><input type="text" name="x1" class="num" value="{{ r.x1 }}" placeholder="≥0"></td>
+          <td><input type="text" name="y1" class="num" value="{{ r.y1 }}" placeholder="≥0"></td>
+          <td><input type="text" name="x2" class="num" value="{{ r.x2 }}" placeholder="≠ x1"></td>
+          <td><input type="text" name="y2" class="num" value="{{ r.y2 }}" placeholder="≥0"></td>
+          <td><button type="button" class="ghost" onclick="removeRow(this)">删行</button></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div class="actions">
+      <button type="button" class="ghost" onclick="addRow()">添加一行</button>
+      {% if reg and not standards %}
+      <a href="{{ url_for('calibration', prefill='current') }}"><button type="button" class="ghost">按当前发布项目预填行</button></a>
+      {% endif %}
+      <button type="submit">保存标样（生成新标样集版本）</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>换算当前发布批次</h2>
+  <p class="muted">
+    用当前标样集对当前已发布批次的全部结果逐行换算。若缺少项目标样、
+    某项目斜率不为正数、或任一行算出负值/非有限浓度，则<strong>整版校正数据不可供数</strong>并逐条列出原因；
+    换算失败不影响已发布的原始 CSV 与上次已确认的校正结果。
+    预览生成后需确认才生效，<strong>未确认的新数据不可下载</strong>。
+  </p>
+  <form method="post" action="{{ url_for('calibration_preview') }}">
+    <button type="submit" {% if not (reg and standards) %}disabled{% endif %}>
+      {% if not reg %}尚无发布批次，无法换算
+      {% elif not standards %}尚未录入标样，无法换算
+      {% else %}用标样集 #{{ standards.set.id }} 换算发布 v{{ reg.current_version }} 并预览{% endif %}
+    </button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>校正历史（按原版本追溯）</h2>
+  {% if history %}
+  <table>
+    <thead><tr><th>校正</th><th>原始发布版本</th><th>标样集</th><th>行数</th><th>状态</th><th>换算时间 (UTC)</th><th>SHA256</th><th>追溯下载</th></tr></thead>
+    <tbody>
+    {% for c in history %}
+      <tr>
+        <td>#{{ c.id }}</td>
+        <td>v{{ c.source_version }}</td>
+        <td>#{{ c.standards_id }}</td>
+        <td>{{ c.row_count }}</td>
+        <td>{% if c.status == 'current' %}<span class="tag cur">当前生效</span>{% else %}<span class="tag old">已失效</span>{% endif %}</td>
+        <td>{{ c.created_at }}</td>
+        <td style="font-family:monospace;font-size:12px">{{ c.content_hash[:12] }}…</td>
+        <td><a href="{{ url_for('calibration_download', cid=c.id) }}">下载归档 CSV</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted" style="margin-bottom:0">
+    「已失效」的校正对应历史发布版本/历史标样，仅供追溯核对，不得作为当前数据使用。
+  </p>
+  {% else %}
+  <p class="muted" style="margin-bottom:0">暂无校正记录。</p>
+  {% endif %}
+</div>
+
+<script>
+function addRow() {
+  const tbody = document.querySelector('#std-table tbody');
+  const tr = tbody.rows[0].cloneNode(true);
+  tr.querySelectorAll('input').forEach(i => i.value = '');
+  tbody.appendChild(tr);
+}
+function removeRow(btn) {
+  const tbody = document.querySelector('#std-table tbody');
+  if (tbody.rows.length > 1) btn.closest('tr').remove();
+  else btn.closest('tr').querySelectorAll('input').forEach(i => i.value = '');
+}
+</script>
+
+{% endblock %}

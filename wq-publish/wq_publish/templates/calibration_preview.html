@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}校正预览 · 水质批次修订发布{% endblock %}
+{% block content %}
+
+{% if mode == "failed" %}
+<div class="card">
+  <h2>换算失败：整版校正数据不可供数</h2>
+  <div class="banner">
+    基于<strong>发布 v{{ source_version }}</strong> + <strong>标样集 #{{ standards_id }}</strong>
+    的换算未通过校验，本次校正数据<strong>整版不可供数</strong>，不会生成任何校正文件。
+    已发布的原始 CSV 与上次已确认的校正结果均不受影响。
+  </div>
+  <p style="font-weight:600;margin-bottom:6px">失败原因（共 {{ errors|length }} 项）：</p>
+  <ul style="margin-top:0">
+    {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+  </ul>
+  <div class="actions">
+    <a href="{{ url_for('calibration') }}"><button type="button" class="ghost">返回校正页修正标样</button></a>
+  </div>
+</div>
+
+{% elif mode == "stale" %}
+<div class="card">
+  <h2>校正确认被拒：不得固化混合状态</h2>
+  <div class="banner">
+    <strong>该校正预览已过期，禁止确认。</strong>
+    {{ stale_reason }}。确认与发布、标样修改交错时不会固化混合状态，
+    请回到校正页基于当前发布版本与当前标样集重新换算预览。
+  </div>
+  <div class="actions">
+    <a href="{{ url_for('calibration') }}"><button type="button" class="ghost">返回校正页</button></a>
+  </div>
+</div>
+
+{% else %}
+<div class="card">
+  <h2>校正预览（未确认，确认前不可下载）</h2>
+  <div class="meta">
+    <div><b>原始发布版本</b><span>v{{ source_version }}</span></div>
+    <div><b>批次号</b><span>{{ batch_no }}</span></div>
+    <div><b>所用标样集</b><span>#{{ standards_id }}</span></div>
+    <div><b>校正行数</b><span>{{ rows|length }}</span></div>
+  </div>
+  <p class="muted" style="margin-top:14px">
+    请核对以下换算结果。确认后将生成独立的校正 CSV
+    （注释头记录原始发布版本与所用标样集），原子替换
+    <code>downstream/calibrated_results.csv</code> 供统计人员使用；
+    原始发布 CSV 不受影响。确认前若发生新批次发布或标样修改，本预览将作废。
+  </p>
+  <div class="actions">
+    <form method="post" action="{{ url_for('calibration_confirm', token=token) }}">
+      <button type="submit">确认无误，生成校正 CSV 并生效</button>
+    </form>
+    <form method="post" action="{{ url_for('calibration_cancel', token=token) }}">
+      <button type="submit" class="ghost">放弃本次校正</button>
+    </form>
+    <a href="{{ url_for('calibration') }}"><button type="button" class="ghost">返回校正页</button></a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>校正后数据（{{ rows|length }} 行）</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>样本号</th><th>检测项目</th><th>原始读数</th><th>校正后浓度 (mg/L)</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>{{ r.sample_no }}</td><td>{{ r.analyte }}</td>
+        <td>{{ r.raw|conc }}</td><td><strong>{{ r.concentration|conc }}</strong></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endif %}
+
+{% endblock %}

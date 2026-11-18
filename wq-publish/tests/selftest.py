@@ -6,6 +6,8 @@
 3. 并发：两个页面从同一版本发起，仅一个发布成功，另一个 409 须重新预览
 4. 崩溃恢复：文件缺失、文件被改坏、遗留临时文件、游离文件、改名后未提交
 5. 撤回语义：整批替换后旧行消失；会话取消/重复发布防护
+6. 标样校正：录入校验、两点线性换算、缺标样/斜率非正/负值/非有限整版失败、
+   确认与发布/标样修改交错拒绝固化混合状态、失效校正追溯、校正文件崩溃恢复
 """
 import hashlib
 import io
@@ -17,7 +19,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from wq_publish.app import create_app
-from wq_publish.storage import LIVE_FILENAME
+from wq_publish.storage import CALIBRATED_FILENAME, LIVE_FILENAME
 from wq_publish.validation import render_csv, validate_csv
 
 PASS, FAIL = 0, 0
@@ -188,7 +190,7 @@ check("5d 游离文件被移入 quarantine",
 with app3.storage._connect() as conn:
     old_csv = app3.storage._render_version(conn, reg["current_version"])
 newer = render_csv([{"sample_no": "ZX", "analyte": "氨氮", "concentration": 9.9}])
-app3.storage._atomic_write(newer)
+app3.storage._atomic_write(app3.storage.live_path, ".tmp-publish-", newer)
 check("预置：文件已被换成未登记的新版本",
       open(live, "rb").read().decode() != old_csv)
 app4 = create_app(data_dir=data_dir, downstream_dir=down_dir)
@@ -207,6 +209,237 @@ check("取消后发布被拒绝（409 且会话 cancelled）",
       and app.storage.get_session(tok)["status"] == "cancelled")
 check("取消不影响当前版本",
       app.storage.current_registry()["current_version"] == v_before)
+
+# ---------------- 7-13. 标样校正 ----------------
+calibrated_live = os.path.join(down_dir, CALIBRATED_FILENAME)
+archive_dir = os.path.join(data_dir, "calibration_archive")
+
+
+def post_standards(rows, follow=True):
+    """rows: [(analyte, x1, y1, x2, y2), ...]（字符串原样提交）"""
+    data = {"analyte": [], "x1": [], "y1": [], "x2": [], "y2": []}
+    for a, x1, y1, x2, y2 in rows:
+        data["analyte"].append(a)
+        data["x1"].append(x1)
+        data["y1"].append(y1)
+        data["x2"].append(x2)
+        data["y2"].append(y2)
+    return client.post("/calibration/standards", data=data,
+                       follow_redirects=follow)
+
+
+def publish_file(fname, batch_no):
+    r = upload(client, fname, batch_no)
+    tok = re.search(rb'/publish/([0-9a-f]+)', r.data).group(1).decode()
+    return client.post(f"/publish/{tok}")
+
+
+def cal_preview_token(resp):
+    m = re.search(rb'/calibration/confirm/([0-9a-f]+)', resp.data)
+    return m.group(1).decode() if m else None
+
+
+def current_cal_hash():
+    cal = app.storage.current_calibration()
+    return (cal["id"], cal["content_hash"]) if cal else (None, None)
+
+
+# 当前状态：发布 v4（batch_v2_revision 内容），项目：氨氮/总磷/COD
+print("== 7. 标样录入校验 ==")
+resp = post_standards([("氨氮", "1", "1.1", "1", "2.1")])
+check("两组读数相同被拒", "无法确定" in resp.data.decode() or "相同" in resp.data.decode())
+resp = post_standards([("氨氮", "-1", "1.1", "2", "2.1")])
+check("负读数被拒", "负数" in resp.data.decode() or "≥ 0" in resp.data.decode())
+resp = post_standards([("氨氮", "nan", "1.1", "2", "2.1")])
+check("NaN 读数被拒", "有限" in resp.data.decode())
+resp = post_standards([("氨氮", "abc", "1.1", "2", "2.1")])
+check("非数字读数被拒", "不是合法数字" in resp.data.decode())
+resp = post_standards([("氨氮", "0", "0.1", "1", "1.1"),
+                       ("氨氮", "0", "0.2", "1", "1.2")])
+check("重复项目被拒", "重复" in resp.data.decode())
+resp = post_standards([("", "", "", "", "")])
+check("空表单被拒", "至少需要录入一个" in resp.data.decode())
+check("非法录入均未产生标样集", app.storage.current_standard_set() is None)
+
+# 合法标样：三个项目 k=2, b=0
+GOOD_STANDARDS = [("氨氮", "0", "0", "1", "2"),
+                  ("总磷", "0", "0", "0.5", "1"),
+                  ("COD", "0", "0", "10", "20")]
+resp = post_standards(GOOD_STANDARDS)
+check("合法标样保存成功", "标样集 #1 已保存" in resp.data.decode(), resp.data.decode())
+check("当前标样集为 #1", app.storage.current_standard_set()["set"]["id"] == 1)
+resp = post_standards(GOOD_STANDARDS)
+check("相同内容复用原版本（不产生新版本）",
+      "完全一致" in resp.data.decode()
+      and app.storage.current_standard_set()["set"]["id"] == 1)
+
+print("== 8. 换算预览 → 确认 → 校正 CSV 供数 ==")
+check("确认前无生效校正，/calibrated.csv 404",
+      client.get("/calibrated.csv").status_code == 404)
+resp = client.post("/calibration/preview")
+body = resp.data.decode()
+check("换算预览成功且含确认令牌", resp.status_code == 200
+      and "校正预览" in body and cal_preview_token(resp) is not None)
+check("预览含换算值（S001 氨氮 1.3→2.6，S002 COD 32.5→65.0）",
+      "2.6" in body and "65.0" in body)
+check("预览未确认前仍未生成校正文件", not os.path.exists(calibrated_live)
+      and client.get("/calibrated.csv").status_code == 404)
+ctok1 = cal_preview_token(resp)
+resp = client.post(f"/calibration/confirm/{ctok1}")
+check("确认后 302 回校正页", resp.status_code == 302)
+cal_id, cal_hash = current_cal_hash()
+check("校正 #1 生效", cal_id == 1)
+check("下游校正 CSV 已生成且哈希与登记一致",
+      os.path.exists(calibrated_live)
+      and hashlib.sha256(open(calibrated_live, "rb").read()).hexdigest() == cal_hash)
+resp = client.get("/calibrated.csv")
+check("当前校正 CSV 可下载", resp.status_code == 200)
+check("校正 CSV 注释头记录源版本与标样集",
+      b"source_version=4" in resp.data and b"standards_set=1" in resp.data)
+check("校正 CSV 含原始读数与校正浓度",
+      b"raw_reading" in resp.data and b"2.6" in resp.data and b"65.0" in resp.data)
+check("归档文件已生成",
+      any(f"calibrated_v4_s1_c1" in n for n in os.listdir(archive_dir)))
+check("同一会话重复确认被拒（409）",
+      client.post(f"/calibration/confirm/{ctok1}").status_code == 409)
+reg = app.storage.current_registry()
+check("原始 CSV 供数不受影响",
+      client.get("/published.csv").status_code == 200
+      and hashlib.sha256(open(os.path.join(down_dir, LIVE_FILENAME), "rb").read()).hexdigest()
+      == reg["content_hash"])
+
+print("== 9. 交错：预览后先发布新批次，确认被拒且不固化混合状态 ==")
+resp = client.post("/calibration/preview")
+ctok2 = cal_preview_token(resp)
+check("基于 v4+#1 的校正预览生成", ctok2 is not None)
+publish_file("batch_v1.csv", "BATCH-101")
+check("新批次发布为 v5", app.storage.current_registry()["current_version"] == 5)
+resp = client.post(f"/calibration/confirm/{ctok2}")
+check("确认被拒（409 过期页，提示不得固化混合状态）",
+      resp.status_code == 409 and "不得固化混合状态" in resp.data.decode())
+check("过期会话标记 obsolete",
+      app.storage.get_calibration_session(ctok2)["status"] == "obsolete")
+check("发布后旧校正已失效，当前无生效校正",
+      app.storage.current_calibration() is None)
+check("旧校正文件已撤下，不作为当前数据下载",
+      not os.path.exists(calibrated_live)
+      and client.get("/calibrated.csv").status_code == 404)
+resp = client.get("/calibrations/1/download")
+check("旧校正可按原版本追溯下载（source_version=4）",
+      resp.status_code == 200 and b"source_version=4" in resp.data)
+
+print("== 10. 交错：预览后标样被修改，确认被拒 ==")
+resp = client.post("/calibration/preview")
+ctok3 = cal_preview_token(resp)
+check("基于 v5+#1 的校正预览生成", ctok3 is not None)
+resp = post_standards([("氨氮", "0", "0", "1", "2"), ("总磷", "0", "0", "0.5", "1")])
+check("标样修改保存为 #2（去掉 COD 项目）",
+      app.storage.current_standard_set()["set"]["id"] == 2)
+resp = client.post(f"/calibration/confirm/{ctok3}")
+check("确认被拒（409，标样已变化）",
+      resp.status_code == 409 and "标样" in resp.data.decode())
+check("仍无生效校正", app.storage.current_calibration() is None)
+
+print("== 11. 换算失败：整版不可供数并显示原因 ==")
+resp = client.post("/calibration/preview")
+body = resp.data.decode()
+check("缺少项目标样 → 整版失败并显示原因",
+      "整版校正数据不可供数" in body and "缺少标样" in body and "COD" in body)
+check("失败预览不提供确认令牌", cal_preview_token(resp) is None)
+check("失败后不产生校正文件", not os.path.exists(calibrated_live)
+      and client.get("/calibrated.csv").status_code == 404)
+
+resp = post_standards([("氨氮", "0", "0", "1", "2"),
+                       ("总磷", "0", "0", "0.5", "1"),
+                       ("COD", "10", "20", "20", "10")])  # k=-1
+resp = client.post("/calibration/preview")
+check("斜率非正 → 整版失败并显示原因", "斜率" in resp.data.decode()
+      and "整版校正数据不可供数" in resp.data.decode())
+
+resp = post_standards([("氨氮", "5", "0", "10", "1"),   # k=0.2, b=-1 → 负值
+                       ("总磷", "0", "0", "0.5", "1"),
+                       ("COD", "0", "0", "10", "20")])
+resp = client.post("/calibration/preview")
+body = resp.data.decode()
+check("换算得负值 → 整版失败并显示原因",
+      "负值" in body and "整版校正数据不可供数" in body, body[:2000])
+
+resp = post_standards([("氨氮", "0", "0", "1e-300", "1e300"),  # k 溢出 inf
+                       ("总磷", "0", "0", "0.5", "1"),
+                       ("COD", "0", "0", "10", "20")])
+resp = client.post("/calibration/preview")
+check("斜率非有限 → 整版失败并显示原因", "非有限" in resp.data.decode())
+
+check("多次失败均未产生校正文件", not os.path.exists(calibrated_live))
+resp = client.get("/calibrations/1/download")
+check("上次完整校正结果（#1）仍完整可追溯",
+      resp.status_code == 200 and b"source_version=4" in resp.data)
+
+print("== 12. 重新换算确认 + 校正文件崩溃恢复 ==")
+resp = post_standards(GOOD_STANDARDS)  # 内容同 #1，但相对当前 #5 已变化 → 新版本
+sid = app.storage.current_standard_set()["set"]["id"]
+check("标样恢复为合法集（新版本）", sid == 6, f"got #{sid}")
+resp = client.post("/calibration/preview")
+ctok4 = cal_preview_token(resp)
+resp = client.post(f"/calibration/confirm/{ctok4}")
+check("校正 #2 确认生效", resp.status_code == 302
+      and app.storage.current_calibration()["id"] == 2
+      and app.storage.current_calibration()["source_version"] == 5)
+resp = client.get("/calibrated.csv")
+check("新校正 CSV 记录源版本 v5 与标样集 #6",
+      b"source_version=5" in resp.data and f"standards_set={sid}".encode() in resp.data)
+check("校正 #1 已失效但可追溯",
+      b"source_version=4" in client.get("/calibrations/1/download").data)
+
+# 12a 校正文件被改坏 → 重启按登记重建
+with open(calibrated_live, "ab") as fh:
+    fh.write(b"CORRUPTED\n")
+app_c1 = create_app(data_dir=data_dir, downstream_dir=down_dir)
+cal = app_c1.storage.current_calibration()
+check("12a 损坏校正文件按登记重建",
+      hashlib.sha256(open(calibrated_live, "rb").read()).hexdigest()
+      == cal["content_hash"])
+
+# 12b 校正文件被删除 → 重启重建
+os.unlink(calibrated_live)
+create_app(data_dir=data_dir, downstream_dir=down_dir)
+check("12b 缺失校正文件按登记重建", os.path.exists(calibrated_live))
+
+# 12c 归档文件被删除 → 重启补写
+os.unlink(os.path.join(archive_dir, f"calibrated_v5_s{sid}_c2.csv"))
+create_app(data_dir=data_dir, downstream_dir=down_dir)
+check("12c 缺失归档按登记补写",
+      os.path.exists(os.path.join(archive_dir, f"calibrated_v5_s{sid}_c2.csv")))
+
+# 12d 模拟“文件已写但登记未提交”：DB 无生效校正而文件存在 → 隔离不供数
+with app.storage._connect() as conn:
+    conn.execute("UPDATE calibrations SET status='superseded' WHERE status='current'")
+create_app(data_dir=data_dir, downstream_dir=down_dir)
+check("12d 无生效登记时校正文件被隔离（不作为当前数据）",
+      not os.path.exists(calibrated_live)
+      and any(f.endswith(CALIBRATED_FILENAME)
+              for f in os.listdir(os.path.join(data_dir, "quarantine"))))
+
+# 12e 归档目录游离文件 → 隔离
+stranger_arc = os.path.join(archive_dir, "stranger-calib.csv")
+open(stranger_arc, "wb").write(b"x")
+create_app(data_dir=data_dir, downstream_dir=down_dir)
+check("12e 归档目录游离文件被隔离", not os.path.exists(stranger_arc))
+
+reg = app.storage.current_registry()
+check("原始发布 CSV 全程不受影响",
+      client.get("/published.csv").status_code == 200
+      and hashlib.sha256(open(os.path.join(down_dir, LIVE_FILENAME), "rb").read()).hexdigest()
+      == reg["content_hash"])
+
+print("== 13. 校正会话取消 ==")
+resp = client.post("/calibration/preview")
+ctok5 = cal_preview_token(resp)
+client.post(f"/calibration/cancel/{ctok5}")
+check("取消后确认被拒（409 且会话 cancelled）",
+      client.post(f"/calibration/confirm/{ctok5}").status_code == 409
+      and app.storage.get_calibration_session(ctok5)["status"] == "cancelled")
+check("取消后不生成校正文件", not os.path.exists(calibrated_live))
 
 shutil.rmtree(tmp, ignore_errors=True)
 print(f"\n结果：{PASS} 通过，{FAIL} 失败")

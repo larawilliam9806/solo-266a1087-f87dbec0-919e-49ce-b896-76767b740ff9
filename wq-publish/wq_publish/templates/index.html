@@ -21,6 +21,30 @@
 </div>
 
 <div class="card">
+  <h2>标样校正（供统计人员使用校正后浓度）</h2>
+  {% if current_cal %}
+  <div class="meta">
+    <div><b>生效校正</b><span>#{{ current_cal.id }}</span></div>
+    <div><b>原始发布版本</b><span>v{{ current_cal.source_version }}</span></div>
+    <div><b>所用标样集</b><span>#{{ current_cal.standards_id }}</span></div>
+    <div><b>行数</b><span>{{ current_cal.row_count }}</span></div>
+    <div><b>换算时间 (UTC)</b><span>{{ current_cal.created_at }}</span></div>
+  </div>
+  <p class="muted" style="margin-bottom:0">
+    校正供数文件：<code>downstream/{{ calibrated_filename }}</code>
+    （<a href="{{ url_for('calibrated_csv') }}">查看当前校正 CSV</a>，
+    <a href="{{ url_for('calibration') }}">进入校正页</a>）
+  </p>
+  {% else %}
+  <p class="muted" style="margin-bottom:0">
+    当前无生效的校正数据{% if standards %}（标样集 #{{ standards.set.id }} 已录入）{% endif %}。
+    新批次发布或标样修改后，需到<a href="{{ url_for('calibration') }}">校正页</a>重新换算并确认，
+    旧校正文件仅可按原版本追溯，不作为当前数据下载。原始发布 CSV 供数不受影响。
+  </p>
+  {% endif %}
+</div>
+
+<div class="card">
   <h2>发起批次修订</h2>
   <form method="post" action="{{ url_for('preview') }}" enctype="multipart/form-data">
     <label for="batch_no">批次号</label>

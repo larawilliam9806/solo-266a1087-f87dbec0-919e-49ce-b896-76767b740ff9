@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h2>当前发布登记</h2>
+  {% if reg %}
+  <div class="meta">
+    <div><b>当前版本</b><span>v{{ reg.current_version }}</span></div>
+    <div><b>批次号</b><span>{{ reg.batch_no }}</span></div>
+    <div><b>行数</b><span>{{ reg.row_count }}</span></div>
+    <div><b>发布时间 (UTC)</b><span>{{ reg.published_at }}</span></div>
+    <div><b>内容 SHA256</b><span style="font-size:13px;font-family:monospace">{{ reg.content_hash[:16] }}…</span></div>
+  </div>
+  <p class="muted" style="margin-bottom:0">
+    下游采集程序读取：<code>downstream/{{ live_filename }}</code>
+    （<a href="{{ url_for('published_csv') }}">查看已发布 CSV</a>，文件原子替换，下游只会读到完整旧版或新版）
+  </p>
+  {% else %}
+  <p class="muted" style="margin-bottom:0">尚未发布任何版本。首次发布将整批写入并登记为 v1。</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>发起批次修订</h2>
+  <form method="post" action="{{ url_for('preview') }}" enctype="multipart/form-data">
+    <label for="batch_no">批次号</label>
+    <input type="text" id="batch_no" name="batch_no" required maxlength="64"
+           placeholder="例如 BATCH-20261117-01">
+    <label for="csv_file">仪器导出 CSV（表头需含：样本号 / 检测项目 / 浓度，兼容中英文表头）</label>
+    <input type="file" id="csv_file" name="csv_file" accept=".csv,text/csv" required>
+    <p class="muted">
+      规则：同一样本同一检测项目不得重复；浓度必须是非负数字（mg/L）。
+      本次上传即代表修订后的完整一批：未出现的旧行将作为<strong>撤回（删除）</strong>处理。
+    </p>
+    <button type="submit">校验并预览增删改</button>
+  </form>
+</div>
+
+{% if reg %}
+<div class="card">
+  <h2>当前已发布数据（v{{ reg.current_version }}，共 {{ rows|length }} 行）</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>样本号</th><th>检测项目</th><th>浓度 (mg/L)</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr><td>{{ r.sample_no }}</td><td>{{ r.analyte }}</td><td>{{ r.concentration|conc }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>最近事件（含启动恢复记录）</h2>
+  {% if events %}
+  <table>
+    <thead><tr><th style="width:190px">时间 (UTC)</th><th style="width:90px">类型</th><th>说明</th></tr></thead>
+    <tbody>
+    {% for e in events %}
+      <tr><td>{{ e.ts }}</td><td>{{ e.kind }}</td><td>{{ e.detail }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted" style="margin-bottom:0">暂无事件。</p>
+  {% endif %}
+</div>
+
+{% endblock %}

@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}修订预览 · 水质批次修订发布{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>修订预览：批次 {{ batch_no }}</h2>
+  <div class="meta">
+    <div><b>预览基线版本</b><span>v{{ base_version }}</span></div>
+    <div><b>当前登记版本</b><span>v{{ current_version }}</span></div>
+    <div><b>本批行数</b><span>{{ rows|length }}</span></div>
+    <div><b>新增 / 修改 / 撤回</b>
+      <span>
+        <span class="tag ins">+{{ diff.inserts|length }}</span>
+        <span class="tag upd">~{{ diff.updates|length }}</span>
+        <span class="tag del">−{{ diff.deletes|length }}</span>
+      </span>
+    </div>
+  </div>
+
+  {% if stale %}
+  <div class="banner" style="margin-top:16px">
+    <strong>该预览已过期，禁止发布。</strong>
+    {{ stale_reason }}。下方仍按该会话的数据展示差异，请回到首页基于
+    v{{ current_version }} 重新上传并预览后再发布，本次不会覆盖已生效的发布。
+  </div>
+  {% else %}
+  <p class="muted" style="margin-top:14px">
+    请核对以下差异。确认后将<strong>整批替换</strong>
+    <code>downstream/{{ live_filename }}</code> 并登记新版本；
+    “撤回”行表示该样本该项目的检测结果被删除。发布过程对下游原子可见。
+  </p>
+  {% endif %}
+
+  <div class="actions">
+    {% if not stale %}
+    <form method="post" action="{{ url_for('publish', token=token) }}">
+      <button type="submit">确认无误，整批替换并发布</button>
+    </form>
+    {% endif %}
+    <form method="post" action="{{ url_for('cancel', token=token) }}">
+      <button type="submit" class="ghost">放弃本次修订</button>
+    </form>
+    <a href="{{ url_for('index') }}"><button type="button" class="ghost">返回首页</button></a>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <h2><span class="tag ins">新增</span> 检测结果（{{ diff.inserts|length }}）</h2>
+    {% if diff.inserts %}
+    <div class="scroll"><table>
+      <thead><tr><th>样本号</th><th>检测项目</th><th>新浓度</th></tr></thead>
+      <tbody>{% for d in diff.inserts %}
+        <tr><td>{{ d.sample_no }}</td><td>{{ d.analyte }}</td><td>{{ d.new|conc }}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    {% else %}<p class="muted">无</p>{% endif %}
+  </div>
+
+  <div class="card">
+    <h2><span class="tag upd">修改</span> 浓度（{{ diff.updates|length }}）</h2>
+    {% if diff.updates %}
+    <div class="scroll"><table>
+      <thead><tr><th>样本号</th><th>检测项目</th><th>旧值</th><th>新值</th></tr></thead>
+      <tbody>{% for d in diff.updates %}
+        <tr><td>{{ d.sample_no }}</td><td>{{ d.analyte }}</td>
+            <td>{{ d.old|conc }}</td><td><strong>{{ d.new|conc }}</strong></td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    {% else %}<p class="muted">无</p>{% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <h2><span class="tag del">撤回（删除）</span> 检测结果（{{ diff.deletes|length }}）</h2>
+  {% if diff.deletes %}
+  <p class="muted">以下结果存在于当前发布版本、但不在本次 CSV 中，确认发布后将被撤回。</p>
+  <div class="scroll"><table>
+    <thead><tr><th>样本号</th><th>检测项目</th><th>撤回前浓度</th></tr></thead>
+    <tbody>{% for d in diff.deletes %}
+      <tr><td>{{ d.sample_no }}</td><td>{{ d.analyte }}</td><td>{{ d.old|conc }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="muted">无</p>{% endif %}
+</div>
+
+<details class="card">
+  <summary style="cursor:pointer;font-weight:600">本批完整数据（{{ rows|length }} 行，含不变项 {{ diff.unchanged|length }} 行）</summary>
+  <div class="scroll" style="margin-top:10px"><table>
+    <thead><tr><th>样本号</th><th>检测项目</th><th>浓度 (mg/L)</th></tr></thead>
+    <tbody>{% for r in rows %}
+      <tr><td>{{ r.sample_no }}</td><td>{{ r.analyte }}</td><td>{{ r.concentration|conc }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</details>
+
+{% endblock %}

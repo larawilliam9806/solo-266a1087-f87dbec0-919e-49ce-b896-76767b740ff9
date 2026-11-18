@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}水质批次修订发布{% endblock %}</title>
+  <style>
+    :root { --line:#d7dde5; --blue:#1f5fae; --red:#b42318; --green:#067647; --amber:#b54708; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: "PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+           color:#1d2939; background:#f4f6f9; line-height:1.55; }
+    header { background:#10325f; color:#fff; padding:14px 28px; }
+    header h1 { margin:0; font-size:19px; font-weight:600; }
+    main { max-width:1080px; margin:24px auto; padding:0 20px; }
+    .card { background:#fff; border:1px solid var(--line); border-radius:10px;
+            padding:20px 24px; margin-bottom:20px; }
+    .card h2 { margin:0 0 14px; font-size:16px; }
+    label { display:block; font-weight:600; margin:10px 0 4px; font-size:14px; }
+    input[type=text], input[type=file] { width:100%; padding:9px 10px; border:1px solid var(--line);
+            border-radius:7px; font-size:14px; }
+    button { padding:9px 22px; border-radius:7px; border:1px solid var(--blue);
+             background:var(--blue); color:#fff; font-size:14px; cursor:pointer; }
+    button.ghost { background:#fff; color:#344054; border-color:var(--line); }
+    button.danger { background:var(--red); border-color:var(--red); }
+    button:disabled { background:#98a2b3; border-color:#98a2b3; cursor:not-allowed; }
+    table { width:100%; border-collapse:collapse; font-size:13px; margin-top:8px; }
+    th, td { border:1px solid var(--line); padding:6px 9px; text-align:left; }
+    th { background:#f2f4f7; font-weight:600; }
+    .meta { display:flex; flex-wrap:wrap; gap:26px; }
+    .meta div b { display:block; font-size:12px; color:#667085; font-weight:500; }
+    .meta div span { font-size:18px; font-weight:600; }
+    .flash { border-radius:8px; padding:10px 14px; margin-bottom:14px; font-size:14px; }
+    .flash.error { background:#fef3f2; border:1px solid #fecdca; color:var(--red); }
+    .flash.success { background:#ecfdf3; border:1px solid #abefc6; color:var(--green); }
+    .flash.info { background:#eff8ff; border:1px solid #b2ddff; color:var(--blue); }
+    .tag { display:inline-block; padding:1px 9px; border-radius:999px; font-size:12px; font-weight:600; }
+    .tag.ins { background:#ecfdf3; color:var(--green); }
+    .tag.upd { background:#fffaeb; color:var(--amber); }
+    .tag.del { background:#fef3f2; color:var(--red); }
+    .tag.same { background:#f2f4f7; color:#475467; }
+    .banner { border:1px solid #fecdca; background:#fef3f2; color:var(--red);
+              border-radius:8px; padding:12px 16px; margin-bottom:16px; font-size:14px; }
+    .muted { color:#667085; font-size:13px; }
+    code { background:#f2f4f7; padding:1px 6px; border-radius:5px; }
+    .actions { display:flex; gap:12px; margin-top:16px; }
+    .scroll { max-height:340px; overflow:auto; }
+    .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+    @media (max-width:760px){ .grid2 { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <header><h1>水质实验室 · 批次修订发布台</h1></header>
+  <main>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
